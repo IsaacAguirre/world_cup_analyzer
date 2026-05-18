@@ -101,7 +101,6 @@ MATCH_FEEDERS = {
 }
 
 def load_json_data():
-    # Load Groups Draw
     groups = {}
     if os.path.exists("groups.json"):
         with open("groups.json", "r", encoding="utf-8") as f:
@@ -110,7 +109,6 @@ def load_json_data():
         print("Error: groups.json is missing! Please create it to run simulations.")
         sys.exit(1)
         
-    # Load Eliminated Teams Tracker
     eliminated = set()
     if os.path.exists("eliminated.json"):
         with open("eliminated.json", "r", encoding="utf-8") as f:
@@ -118,11 +116,10 @@ def load_json_data():
                 raw_list = json.load(f)
                 for team in raw_list:
                     cleaned = team.lower().strip()
-                    # Resolve aliases to match internal official names
                     official_name = ALIASES.get(cleaned, cleaned)
                     eliminated.add(official_name.lower())
             except Exception as e:
-                print(f"Warning: Failed to parse eliminated.json ({e}). Proceeding with no eliminations.")
+                print(f"Warning: Failed to parse eliminated.json ({e}).")
                 
     return groups, eliminated
 
@@ -146,40 +143,26 @@ def trace_individual_path(match_id):
 def run_team_matrix(team_query, groups, eliminated):
     target_norm = resolve_normalized_name(team_query)
     found_group, official_name = None, None
-    
     for g_letter, teams in groups.items():
         for t in teams:
             if t.lower() == target_norm:
                 found_group, official_name = g_letter, t
                 break
-                
     if not found_group:
-        return {"error": f"Team '{team_query}' was not identified in the groups system."}
-        
+        return {"error": f"Team '{team_query}' was not identified."}
     if official_name.lower() in eliminated:
-        return {
-            "country_entered": official_name,
-            "status": "ELIMINATED",
-            "message": "This team has been knocked out of the tournament."
-        }
+        return {"country_entered": official_name, "status": "ELIMINATED"}
         
     slots = GROUP_INITIAL_MATCHES[found_group]
     matrix = {
-        "country_entered": official_name,
-        "group": found_group,
-        "status": "ACTIVE",
-        "if_1st": trace_individual_path(slots[1]),
-        "if_2nd": trace_individual_path(slots[2]),
-        "if_3rd": [],
-        "if_4th": "Eliminated in the Group Stage"
+        "country_entered": official_name, "group": found_group, "status": "ACTIVE",
+        "if_1st": trace_individual_path(slots[1]), "if_2nd": trace_individual_path(slots[2]), "if_3rd": []
     }
-    
     for match_id in slots[3]:
         matrix["if_3rd"].append({f"potential_allocation_match_{match_id}": trace_individual_path(match_id)})
     return matrix
 
 def resolve_side_teams(match_target, groups, eliminated):
-    """Recursively resolves bracket paths to build pools of remaining valid live countries."""
     if isinstance(match_target, list):
         teams = set()
         for group, pos in match_target:
@@ -214,10 +197,10 @@ def run_match_combinatorics(match_id, groups, eliminated):
     return side_a_teams, side_b_teams, clean_matchups
 
 def main():
-    parser = argparse.ArgumentParser(description="Live-Updating FIFA World Cup 2026 Analytical Simulation Graph Engine")
-    parser.add_argument("--team", type=str, help="Analyze the prospective pathway vectors of a specific country")
-    parser.add_argument("--match", type=int, help="Extract combinations and available pools feeding a precise Knockout Match ID")
-    parser.add_argument("--expand", action="store_true", help="Print the full scannable array of explicit matchups")
+    parser = argparse.ArgumentParser(description="Live-Updating World Cup 2026 Simulation Graph Engine")
+    parser.add_argument("--team", type=str, help="Analyze the pathway vectors of a specific country")
+    parser.add_argument("--match", type=int, help="Extract combinations and available pools for a precise Match ID")
+    parser.add_argument("--expand", action="store_true", help="Print the full scannable array of explicit pairings")
     args = parser.parse_args()
 
     groups, eliminated = load_json_data()
@@ -229,33 +212,41 @@ def main():
     elif args.match:
         res = run_match_combinatorics(args.match, groups, eliminated)
         if not res:
-            print(f"Error: Match {args.match} falls outside active knockout mapping criteria.")
+            print(f"Error: Match {args.match} falls outside knockout criteria.")
             return
             
         side_a, side_b, matchups = res
+        
+        # New Feature: Consolidate, clean, and deduplicate country names across both sides
+        master_country_set = set()
+        for tracker in side_a:
+            master_country_set.add(tracker.split(" (")[0])
+        for tracker in side_b:
+            master_country_set.add(tracker.split(" (")[0])
+        unique_countries = sorted(list(master_country_set))
+
         print("=========================================================================")
-        print(f"💥 LIVE TOURNAMENT MATRIX PERMUTATIONS FOR MATCH {args.match} 💥")
-        print(f"📍 Venue Location: {MATCH_DETAILS[args.match]['city']}")
-        print(f"📉 Total Active Eliminated Teams Loaded: {len(eliminated)}")
+        print(f"💥 LIVE TOURNAMENT PROFILE FOR MATCH {args.match} 💥")
+        print(f"📍 Location: {MATCH_DETAILS[args.match]['city']}")
+        print(f"📉 Active Eliminations Loaded: {len(eliminated)}")
         print("=========================================================================")
-        print(f"• Remaining Pool Size on Side A: {len(side_a)}")
-        print(f"• Remaining Pool Size on Side B: {len(side_b)}")
-        print(f"• Current Active Combinatorial Matchups Left: {len(matchups)}")
+        print(f"• Total Unique Countries Capable of Reaching This Match: {len(unique_countries)} / 48")
+        print(f"• Unique Permutations Left: {len(matchups)}")
         print("=========================================================================\n")
         
-        print("👉 LIVE SIDE A CANDIDATES:")
-        print(", ".join(side_a) if side_a else "[⚠️ Pool Completely Empty Due To Eliminations]")
-        print("\n👉 LIVE SIDE B CANDIDATES:")
-        print(", ".join(side_b) if side_b else "[⚠️ Pool Completely Empty Due To Eliminations]")
-        print("\n=========================================================================")
-        
+        print("🌍 CLEAN LIST OF ELIGIBLE TEAMS:")
+        print("-------------------------------------------------------------------------")
+        # Print teams cleanly in chunks of 4 for highly scannable output
+        for i in range(0, len(unique_countries), 4):
+            print(", ".join(unique_countries[i:i+4]))
+            
         if args.expand and matchups:
-            print(f"\n📋 ESTIMATED POTENTIAL MATCHUPS ({len(matchups)} TOTAL):")
+            print(f"\n📋 SPECIFIC COMBINATORIAL PAIRINGS ({len(matchups)} TOTAL):")
             print("-------------------------------------------------------------------------")
             for idx, m in enumerate(matchups, start=1):
                 print(f"{idx:03d}. {m['display']:<35} {m['meta']}")
         elif not args.expand:
-            print("\n💡 Run your request back appending '--expand' to list every exact country combination.")
+            print("\n💡 Tip: Append '--expand' to your command to view specific side-vs-side team pairings.")
             
     else:
         parser.print_help()
