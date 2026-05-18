@@ -106,7 +106,7 @@ def load_json_data():
         with open("groups.json", "r", encoding="utf-8") as f:
             groups = json.load(f)
     else:
-        print("Error: groups.json is missing! Please create it to run simulations.")
+        print("Error: groups.json is missing! Please build it to execute queries.")
         sys.exit(1)
         
     eliminated = set()
@@ -131,11 +131,9 @@ def trace_individual_path(match_id):
     path = {}
     rounds = ["Round of 32", "Round of 16", "Quarter-finals", "Semi-finals"]
     curr = match_id
-    
     for r_name in rounds:
         path[r_name] = {"match": f"Match {curr}", "label": MATCH_DETAILS[curr]["label"], "city": MATCH_DETAILS[curr]["city"]}
         curr = NEXT_MATCH.get(curr)
-        
     path["If Win Semi-final (Final)"] = {"match": "Match 104", "label": MATCH_DETAILS[104]["label"], "city": MATCH_DETAILS[104]["city"]}
     path["If Lose Semi-final (3rd Place)"] = {"match": "Match 103", "label": MATCH_DETAILS[103]["label"], "city": MATCH_DETAILS[103]["city"]}
     return path
@@ -201,6 +199,7 @@ def main():
     parser.add_argument("--team", type=str, help="Analyze the pathway vectors of a specific country")
     parser.add_argument("--match", type=int, help="Extract combinations and available pools for a precise Match ID")
     parser.add_argument("--expand", action="store_true", help="Print the full scannable array of explicit pairings")
+    parser.add_argument("--show-excluded", action="store_true", help="Display specific lists of countries barred from this match")
     args = parser.parse_args()
 
     groups, eliminated = load_json_data()
@@ -216,37 +215,70 @@ def main():
             return
             
         side_a, side_b, matchups = res
+        feeder = MATCH_FEEDERS[args.match]
         
-        # New Feature: Consolidate, clean, and deduplicate country names across both sides
-        master_country_set = set()
+        # 1. Gather all 48 core countries
+        all_countries = set()
+        for bracket in groups.values():
+            for team in bracket:
+                all_countries.add(team)
+                
+        # 2. Map pure structural entries (ignores real-time file deletions)
+        struct_a = resolve_side_teams(feeder["side_a"], groups, set())
+        struct_b = resolve_side_teams(feeder["side_b"], groups, set())
+        structural_allowed = {t.split(" (")[0] for t in struct_a}.union({t.split(" (")[0] for t in struct_b})
+        
+        # 3. Gather the active, live entries
+        live_allowed = set()
         for tracker in side_a:
-            master_country_set.add(tracker.split(" (")[0])
+            live_allowed.add(tracker.split(" (")[0])
         for tracker in side_b:
-            master_country_set.add(tracker.split(" (")[0])
-        unique_countries = sorted(list(master_country_set))
+            live_allowed.add(tracker.split(" (")[0])
+            
+        unique_countries = sorted(list(live_allowed))
+        structurally_excluded = sorted(list(all_countries - structural_allowed))
+        eliminated_excluded = sorted(list(structural_allowed - live_allowed))
 
         print("=========================================================================")
         print(f"💥 LIVE TOURNAMENT PROFILE FOR MATCH {args.match} 💥")
         print(f"📍 Location: {MATCH_DETAILS[args.match]['city']}")
-        print(f"📉 Active Eliminations Loaded: {len(eliminated)}")
         print("=========================================================================")
-        print(f"• Total Unique Countries Capable of Reaching This Match: {len(unique_countries)} / 48")
-        print(f"• Unique Permutations Left: {len(matchups)}")
+        print(f"• Unique Live Countries Still Capable of Reaching This Match: {len(unique_countries)}")
+        print(f"• Mathematically Blocked Countries (Structural Design): {len(structurally_excluded)}")
+        print(f"• Active Eliminated Countries Dropped From This Path: {len(eliminated_excluded)}")
+        print(f"• Remaining Matchup Permutations Left: {len(matchups)}")
         print("=========================================================================\n")
         
-        print("🌍 CLEAN LIST OF ELIGIBLE TEAMS:")
+        print("🌍 CLEAN LIST OF LIVE ELIGIBLE TEAMS:")
         print("-------------------------------------------------------------------------")
-        # Print teams cleanly in chunks of 4 for highly scannable output
         for i in range(0, len(unique_countries), 4):
             print(", ".join(unique_countries[i:i+4]))
+            
+        if args.show_excluded:
+            print("\n❌ COUNTRIES THAT CANNOT MAKE THIS MATCH:")
+            print("-------------------------------------------------------------------------")
+            print(f"🚫 Structurally Barred ({len(structurally_excluded)}):")
+            if structurally_excluded:
+                for i in range(0, len(structurally_excluded), 4):
+                    print(f"   {', '.join(structurally_excluded[i:i+4])}")
+            else:
+                print("   None (Every team can structurally reach this match!)")
+                
+            print(f"\n📉 Dropped via Real-Time Eliminations ({len(eliminated_excluded)}):")
+            if eliminated_excluded:
+                for i in range(0, len(eliminated_excluded), 4):
+                    print(f"   {', '.join(eliminated_excluded[i:i+4])}")
+            else:
+                print("   None (No eligible lineage groups have been wiped out yet.)")
+            print("-------------------------------------------------------------------------")
             
         if args.expand and matchups:
             print(f"\n📋 SPECIFIC COMBINATORIAL PAIRINGS ({len(matchups)} TOTAL):")
             print("-------------------------------------------------------------------------")
             for idx, m in enumerate(matchups, start=1):
                 print(f"{idx:03d}. {m['display']:<35} {m['meta']}")
-        elif not args.expand:
-            print("\n💡 Tip: Append '--expand' to your command to view specific side-vs-side team pairings.")
+        elif not args.expand and not args.show_excluded:
+            print("\n💡 Tip: Append '--show-excluded' to see barred teams, or '--expand' to view explicit matchups.")
             
     else:
         parser.print_help()
