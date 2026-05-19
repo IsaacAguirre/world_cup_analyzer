@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Panini World Cup Sticker Tracker</title>
+  <link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body>
+  <div class="app-shell">
+    <header>
+      <h1>Panini World Cup Sticker Tracker</h1>
+      <p>Update country stickers and view missing/found status locally.</p>
+    </header>
+
+    <section class="controls">
+      <label for="country-select">Select country</label>
+      <select id="country-select"></select>
+      <button id="load-report">Load report</button>
+    </section>
+
+    <section class="report-panel">
+      <div class="card">
+        <h2>Country report</h2>
+        <div id="report-output" class="report-output">
+          <p>Select a country and click "Load report".</p>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Add stickers</h2>
+        <p>Enter sticker numbers separated by commas.</p>
+        <input id="sticker-input" type="text" placeholder="e.g. 1,5,10" />
+        <button id="save-stickers">Save stickers</button>
+        <div id="save-status" class="status"></div>
+      </div>
+    </section>
+
+    <footer>
+      <p>API endpoints: <code>/countries</code>, <code>/inventory/{country_code}</code></p>
+    </footer>
+  </div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
