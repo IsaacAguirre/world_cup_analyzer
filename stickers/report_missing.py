@@ -10,6 +10,7 @@ from inventory import (
     load_all_inventories,
     load_global_inventory,
     load_types,
+    load_groups,
     get_types_by_scope,
     summarize_missing,
     summarize_duplicates,
@@ -89,12 +90,12 @@ def main() -> None:
     if args.show_global:
         try:
             global_inventory = load_global_inventory(Path(args.global_inventory))
-            global_types = get_types_by_scope(load_types(), "global")
+            global_types_config = get_types_by_scope(load_types(), "global")
         except FileNotFoundError:
             print(f"Global inventory not found at {args.global_inventory}. Run generate_inventory.py first.")
             return
         
-        for section_name in sorted(global_types.keys()):
+        for section_name in ["FWC", "CC"]: # Explicit order for global types
             print(format_summary(section_name, global_inventory, target_section=section_name))
             print()
         return
@@ -109,14 +110,33 @@ def main() -> None:
         dup_str = f" [{duplicates} dups]" if duplicates > 0 else ""
         print(f"{country_code}: {total_missing} missing ({completion:.1f}%){dup_str}")
 
+    # Custom order for countries based on World Cup groups
+    ordered_country_codes = []
+    wc_groups = load_groups()
+    for group_letter in sorted(wc_groups.keys()):
+        for country_code_in_group in wc_groups[group_letter]:
+            if country_code_in_group in inventories:
+                ordered_country_codes.append(country_code_in_group)
+
+    print("\n--- Country Summaries (Ordered by World Cup Group) ---")
+    for country_code in ordered_country_codes:
+        inventory = inventories[country_code]
+        missing = summarize_missing(inventory)
+        total_missing = sum(missing.values())
+        total_items = sum(len(v) for k, v in inventory.items() if isinstance(v, dict) and k != "country")
+        completion = (1 - total_missing / total_items) * 100 if total_items > 0 else 0
+        duplicates = sum(summarize_duplicates(inventory).values())
+        dup_str = f" [{duplicates} dups]" if duplicates > 0 else ""
+        print(f"{country_code}: {total_missing} missing ({completion:.1f}%){dup_str}")
+
     try:
         global_inventory = load_global_inventory(Path(args.global_inventory))
-        global_types = get_types_by_scope(load_types(), "global")
+        global_types_config = get_types_by_scope(load_types(), "global")
         missing_all = summarize_missing(global_inventory)
         dups_all = summarize_duplicates(global_inventory)
         
-        print()
-        for section_name in sorted(global_types.keys()):
+        print("\n--- Global Sticker Summaries ---")
+        for section_name in ["FWC", "CC"]: # Explicit order for global types
             m_count = missing_all.get(section_name, 0)
             d_count = dups_all.get(section_name, 0)
             total = len(global_inventory.get(section_name, {}))

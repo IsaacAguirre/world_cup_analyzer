@@ -16,6 +16,7 @@ from inventory import (
     get_types_by_scope,
     load_country_inventory_by_code,
     load_countries,
+    load_groups,
     load_types,
     load_global_inventory,
     save_country_inventory,
@@ -60,7 +61,15 @@ def get_inventory_path_for_country(country_code: str) -> Path:
 
 
 def get_global_types() -> list[str]:
-    return list(get_types_by_scope(load_types(), "global").keys())
+    types = load_types()
+    global_types_config = get_types_by_scope(types, "global")
+    # Explicitly define the order for FWC and CC
+    ordered_global_types = []
+    if "FWC" in global_types_config:
+        ordered_global_types.append("FWC")
+    if "CC" in global_types_config:
+        ordered_global_types.append("CC")
+    return ordered_global_types
 
 
 def ensure_country_exists(country_code: str) -> None:
@@ -114,8 +123,27 @@ def build_inventory_report(name: str, inventory: dict[str, Any], target_section:
 
 @app.get("/countries")
 def list_countries() -> dict[str, Any]:
-    global_names = sorted(get_global_types())
-    return {"countries": global_names + sorted(load_countries())}
+    ordered_list = []
+    
+    global_types = get_global_types() # Returns ['FWC', 'CC']
+    all_country_codes = load_countries() # All 48 country codes
+    wc_groups = load_groups() # Group A, B, C... with their countries
+
+    # 1. Add FWC
+    if "FWC" in global_types:
+        ordered_list.append("FWC")
+
+    # 2. Add countries by World Cup group order (A, B, C...)
+    for group_letter in sorted(wc_groups.keys()): # Ensures A, B, C order
+        for country_code_in_group in wc_groups[group_letter]:
+            if country_code_in_group in all_country_codes: # Only add if it's a valid country code we track
+                ordered_list.append(country_code_in_group)
+    
+    # 3. Add CC
+    if "CC" in global_types:
+        ordered_list.append("CC")
+
+    return {"countries": ordered_list}
 
 
 @app.get("/inventory/{country_code}")

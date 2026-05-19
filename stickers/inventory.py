@@ -7,6 +7,7 @@ from typing import Any, Dict, Iterable
 BASE_DIR = Path(__file__).resolve().parent
 COUNTRIES_FILE = BASE_DIR / "countries.json"
 TYPES_FILE = BASE_DIR / "types.json"
+GROUPS_FILE = BASE_DIR / "groups.json"
 COUNTRY_INVENTORY_DIR = BASE_DIR / "country_inventory"
 GLOBAL_INVENTORY_FILE = COUNTRY_INVENTORY_DIR / "global_inventory.json"
 
@@ -156,3 +157,7 @@ def load_countries() -> list[str]:
 
 def load_types() -> Dict[str, Dict[str, Any]]:
     return load_json(TYPES_FILE)
+
+
+def load_groups() -> Dict[str, list[str]]:
+    return load_json(GROUPS_FILE)

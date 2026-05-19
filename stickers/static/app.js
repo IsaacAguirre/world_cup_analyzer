@@ -38,7 +38,6 @@ function showMessage(message, type = "success") {
 async function loadCountries() {
   try {
     const data = await apiFetch("/countries");
-    data.countries.sort();
     countrySelect.innerHTML = data.countries.map(code => `<option value="${code}">${code}</option>`).join("");
   } catch (error) {
     reportOutput.textContent = `Error loading countries: ${error.message}`;
