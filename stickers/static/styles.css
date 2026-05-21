@@ -66,6 +66,11 @@ input {
   color: var(--text);
 }
 
+#group-select,
+#country-select {
+  max-width: 220px;
+}
+
 button {
   padding: 12px 18px;
   border: none;

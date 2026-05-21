@@ -19,10 +19,12 @@ from inventory import (
     load_groups,
     load_types,
     load_global_inventory,
+    load_all_inventories,
     save_country_inventory,
     save_global_inventory,
     summarize_duplicates,
     summarize_missing,
+    load_json,
 )
 
 app = FastAPI(
@@ -72,12 +74,69 @@ def get_global_types() -> list[str]:
     return ordered_global_types
 
 
+def load_country_names() -> dict[str, str]:
+    names_path = BASE_DIR / "country_names.json"
+    try:
+        return load_json(names_path)
+    except FileNotFoundError:
+        return {}
+
+
+def get_country_name(country_code: str) -> str:
+    return load_country_names().get(normalize_country_code(country_code), country_code)
+
+
 def ensure_country_exists(country_code: str) -> None:
     country_code = normalize_country_code(country_code)
     if country_code in [t.upper() for t in get_global_types()]:
         return
     if country_code not in load_countries():
         raise HTTPException(status_code=404, detail=f"Country {country_code} not found")
+
+
+def collect_country_reports() -> list[dict[str, Any]]:
+    reports: list[dict[str, Any]] = []
+    tracked_countries = set(load_countries())
+
+    for country_code in sorted(tracked_countries):
+        try:
+            inventory = load_country_inventory_by_code(country_code)
+        except FileNotFoundError:
+            continue
+        reports.append(build_inventory_report(country_code, inventory))
+
+    return reports
+
+
+def collect_global_reports() -> list[dict[str, Any]]:
+    reports: list[dict[str, Any]] = []
+    global_map = {t.upper(): t for t in get_global_types()}
+
+    try:
+        inventory = load_global_inventory(GLOBAL_INVENTORY_FILE)
+    except FileNotFoundError:
+        return reports
+
+    for code, section_name in global_map.items():
+        reports.append(build_inventory_report(section_name, inventory, target_section=section_name))
+
+    return reports
+
+
+def slice_reports_with_ties(reports: list[dict[str, Any]], limit: int = 5) -> tuple[list[dict[str, Any]], int, float | None]:
+    displayed_reports = reports[:limit]
+    tie_count = 0
+    tie_percentage = None
+
+    if len(reports) > limit:
+        tie_percentage = displayed_reports[-1]["completion_percentage"]
+        tie_count = sum(
+            1
+            for report in reports[limit:]
+            if report["completion_percentage"] == tie_percentage
+        )
+
+    return displayed_reports, tie_count, tie_percentage
 
 
 def build_inventory_report(name: str, inventory: dict[str, Any], target_section: str | None = None) -> dict[str, Any]:
@@ -146,6 +205,65 @@ def list_countries() -> dict[str, Any]:
     return {"countries": ordered_list}
 
 
+@app.get("/groups")
+def list_groups() -> dict[str, Any]:
+    groups = {"Global": ["FWC", "CC"]}
+    groups.update(load_groups())
+    return {"groups": groups}
+
+
+@app.get("/summary")
+def summary_report() -> dict[str, Any]:
+    country_reports = collect_country_reports()
+    global_reports = collect_global_reports()
+    for report in country_reports:
+        report["country_name"] = get_country_name(report["country"])
+    for report in global_reports:
+        report["country_name"] = report["country"]
+
+    total_reports = country_reports + global_reports
+    total_possible_stickers = sum(report["counts"]["total"] for report in total_reports)
+    total_owned_sticker_ids = sum(report["counts"]["found"] for report in total_reports)
+    total_missing_sticker_ids = sum(report["counts"]["missing"] for report in total_reports)
+    total_duplicates = sum(sum(report["duplicates"].values()) for report in total_reports)
+
+    sorted_desc = sorted(
+        country_reports,
+        key=lambda report: (-report["completion_percentage"], report["country_name"], report["country"]),
+    )
+    sorted_asc = sorted(
+        country_reports,
+        key=lambda report: (report["completion_percentage"], report["country_name"], report["country"]),
+    )
+
+    top_countries, top_tie_count, top_tie_percentage = slice_reports_with_ties(sorted_desc)
+    bottom_countries, bottom_tie_count, bottom_tie_percentage = slice_reports_with_ties(sorted_asc)
+
+    return {
+        "country_count": len(country_reports),
+        "global_count": len(global_reports),
+        "total_tracked_inventories": len(total_reports),
+        "total_possible_stickers": total_possible_stickers,
+        "total_owned_sticker_ids": total_owned_sticker_ids,
+        "total_duplicates": total_duplicates,
+        "total_missing_sticker_ids": total_missing_sticker_ids,
+        "top_countries": top_countries,
+        "top_tie_count": top_tie_count,
+        "top_tie_percentage": top_tie_percentage,
+        "bottom_countries": bottom_countries,
+        "bottom_tie_count": bottom_tie_count,
+        "bottom_tie_percentage": bottom_tie_percentage,
+    }
+
+
+@app.get("/add", response_class=HTMLResponse)
+def add_page() -> HTMLResponse:
+    add_path = STATIC_DIR / "add.html"
+    if not add_path.exists():
+        raise HTTPException(status_code=500, detail="Add sticker page not found")
+    return HTMLResponse(add_path.read_text(encoding="utf-8"))
+
+
 @app.get("/inventory/{country_code}")
 def read_country_inventory(country_code: str) -> dict[str, Any]:
     normalized_code = normalize_country_code(country_code)
@@ -155,7 +273,9 @@ def read_country_inventory(country_code: str) -> dict[str, Any]:
         try:
             inventory = load_global_inventory(GLOBAL_INVENTORY_FILE)
             section_name = global_map[normalized_code]
-            return build_inventory_report(section_name, inventory, target_section=section_name)
+            report = build_inventory_report(section_name, inventory, target_section=section_name)
+            report["country_name"] = section_name
+            return report
         except FileNotFoundError:
             raise HTTPException(status_code=404, detail="Global inventory file not found")
 
@@ -165,7 +285,9 @@ def read_country_inventory(country_code: str) -> dict[str, Any]:
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail=f"Inventory file not found for {normalized_code}")
 
-    return build_inventory_report(normalized_code, inventory)
+    report = build_inventory_report(normalized_code, inventory)
+    report["country_name"] = get_country_name(normalized_code)
+    return report
 
 
 @app.post("/inventory/{country_code}")
