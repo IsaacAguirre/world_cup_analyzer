@@ -138,7 +138,7 @@ def trace_individual_path(match_id):
     path["If Lose Semi-final (3rd Place)"] = {"match": "Match 103", "label": MATCH_DETAILS[103]["label"], "city": MATCH_DETAILS[103]["city"]}
     return path
 
-def run_team_matrix(team_query, groups, eliminated):
+def run_team_matrix(team_query, groups, eliminated, finish_position=None):
     target_norm = resolve_normalized_name(team_query)
     found_group, official_name = None, None
     for g_letter, teams in groups.items():
@@ -152,6 +152,37 @@ def run_team_matrix(team_query, groups, eliminated):
         return {"country_entered": official_name, "status": "ELIMINATED"}
         
     slots = GROUP_INITIAL_MATCHES[found_group]
+    if finish_position is not None:
+        if finish_position not in {1, 2, 3}:
+            return {"error": f"Finish position '{finish_position}' is invalid. Use 1, 2, or 3."}
+
+        if finish_position == 1:
+            return {
+                "country_entered": official_name,
+                "group": found_group,
+                "status": "ACTIVE",
+                "requested_position": finish_position,
+                "pathway": trace_individual_path(slots[1]),
+            }
+        if finish_position == 2:
+            return {
+                "country_entered": official_name,
+                "group": found_group,
+                "status": "ACTIVE",
+                "requested_position": finish_position,
+                "pathway": trace_individual_path(slots[2]),
+            }
+        return {
+            "country_entered": official_name,
+            "group": found_group,
+            "status": "ACTIVE",
+            "requested_position": finish_position,
+            "pathway": [
+                {f"potential_allocation_match_{match_id}": trace_individual_path(match_id)}
+                for match_id in slots[3]
+            ],
+        }
+
     matrix = {
         "country_entered": official_name, "group": found_group, "status": "ACTIVE",
         "if_1st": trace_individual_path(slots[1]), "if_2nd": trace_individual_path(slots[2]), "if_3rd": []
@@ -162,41 +193,69 @@ def run_team_matrix(team_query, groups, eliminated):
 
 def resolve_side_teams(match_target, groups, eliminated):
     if isinstance(match_target, list):
-        teams = set()
+        teams = {}
         for group, pos in match_target:
             for country in groups[group]:
                 if country.lower() in eliminated:
                     continue
-                teams.add(f"{country} ({group}{pos})")
-        return teams
+                team_key = (country, group, pos)
+                if team_key not in teams:
+                    teams[team_key] = {
+                        "country": country,
+                        "group": group,
+                        "position": pos,
+                        "display": f"{country} ({group}{pos})"
+                    }
+        return list(teams.values())
     
     parent_match = MATCH_FEEDERS[match_target]
     left = resolve_side_teams(parent_match["side_a"], groups, eliminated)
     right = resolve_side_teams(parent_match["side_b"], groups, eliminated)
-    return left.union(right)
+
+    combined = {}
+    for team in left + right:
+        team_key = (team["country"], team["group"], team["position"])
+        combined[team_key] = team
+    return list(combined.values())
 
 def run_match_combinatorics(match_id, groups, eliminated):
     if match_id not in MATCH_FEEDERS:
         return None
         
     feeder = MATCH_FEEDERS[match_id]
-    side_a_teams = sorted(list(resolve_side_teams(feeder["side_a"], groups, eliminated)))
-    side_b_teams = sorted(list(resolve_side_teams(feeder["side_b"], groups, eliminated)))
+    side_a_teams = sorted(
+        resolve_side_teams(feeder["side_a"], groups, eliminated),
+        key=lambda team: (team["country"], team["group"], team["position"])
+    )
+    side_b_teams = sorted(
+        resolve_side_teams(feeder["side_b"], groups, eliminated),
+        key=lambda team: (team["country"], team["group"], team["position"])
+    )
     
     raw_combinations = list(itertools.product(side_a_teams, side_b_teams))
     clean_matchups = []
     
     for ta, tb in raw_combinations:
-        country_a = ta.split(" (")[0]
-        country_b = tb.split(" (")[0]
+        country_a = ta["country"]
+        country_b = tb["country"]
         if country_a != country_b:
-            clean_matchups.append({"display": f"{country_a} vs {country_b}", "meta": f"[{ta} vs {tb}]"})
+            clean_matchups.append({
+                "display": f"{country_a} vs {country_b}",
+                "meta": f"[{ta['display']} vs {tb['display']}]",
+                "position": {
+                    "team_a": ta["position"],
+                    "team_b": tb["position"]
+                },
+                "team_a": ta,
+                "team_b": tb
+            })
             
     return side_a_teams, side_b_teams, clean_matchups
 
 def main():
     parser = argparse.ArgumentParser(description="Live-Updating World Cup 2026 Simulation Graph Engine")
     parser.add_argument("--team", type=str, help="Analyze the pathway vectors of a specific country")
+    parser.add_argument("--position", type=int, help="Optionally limit team-path analysis to a specific finishing position (1, 2, or 3)")
     parser.add_argument("--match", type=int, help="Extract combinations and available pools for a precise Match ID")
     parser.add_argument("--expand", action="store_true", help="Print the full scannable array of explicit pairings")
     parser.add_argument("--show-excluded", action="store_true", help="Display specific lists of countries barred from this match")
@@ -205,7 +264,7 @@ def main():
     groups, eliminated = load_json_data()
 
     if args.team:
-        output = run_team_matrix(args.team, groups, eliminated)
+        output = run_team_matrix(args.team, groups, eliminated, finish_position=args.position)
         print(json.dumps(output, indent=2))
 
     elif args.match:
@@ -226,14 +285,14 @@ def main():
         # 2. Map pure structural entries (ignores real-time file deletions)
         struct_a = resolve_side_teams(feeder["side_a"], groups, set())
         struct_b = resolve_side_teams(feeder["side_b"], groups, set())
-        structural_allowed = {t.split(" (")[0] for t in struct_a}.union({t.split(" (")[0] for t in struct_b})
+        structural_allowed = {t["country"] for t in struct_a}.union({t["country"] for t in struct_b})
         
         # 3. Gather the active, live entries
         live_allowed = set()
         for tracker in side_a:
-            live_allowed.add(tracker.split(" (")[0])
+            live_allowed.add(tracker["country"])
         for tracker in side_b:
-            live_allowed.add(tracker.split(" (")[0])
+            live_allowed.add(tracker["country"])
             
         unique_countries = sorted(list(live_allowed))
         structurally_excluded = sorted(list(all_countries - structural_allowed))
@@ -276,7 +335,7 @@ def main():
             print(f"\n📋 SPECIFIC COMBINATORIAL PAIRINGS ({len(matchups)} TOTAL):")
             print("-------------------------------------------------------------------------")
             for idx, m in enumerate(matchups, start=1):
-                print(f"{idx:03d}. {m['display']:<35} {m['meta']}")
+                print(f"{idx:03d}. {m['display']:<35} {m['meta']} | pos={m['position']['team_a']}/{m['position']['team_b']}")
         elif not args.expand and not args.show_excluded:
             print("\n💡 Tip: Append '--show-excluded' to see barred teams, or '--expand' to view explicit matchups.")
             

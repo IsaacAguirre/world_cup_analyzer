@@ -2,6 +2,14 @@ import json
 import os
 import argparse
 import itertools
+import sys
+
+
+def safe_print(text):
+    try:
+        print(text)
+    except UnicodeEncodeError:
+        print(text.encode("ascii", "ignore").decode("ascii"))
 
 # 2026 Official Groups
 GROUPS = {
@@ -62,35 +70,61 @@ MATCH_FEEDERS = {
 def resolve_side_teams(match_target):
     """Recursively crawls backward to find all unique physical countries eligible for a bracket side."""
     if isinstance(match_target, list):
-        teams = set()
+        teams = {}
         for group, pos in match_target:
             for country in GROUPS[group]:
-                teams.add(f"{country} ({group}{pos})")
-        return teams
+                team_key = (country, group, pos)
+                if team_key not in teams:
+                    teams[team_key] = {
+                        "country": country,
+                        "group": group,
+                        "position": pos,
+                        "display": f"{country} ({group}{pos})",
+                    }
+        return list(teams.values())
     
     # If target points to a preceding match, combine both its branches
     parent_match = MATCH_FEEDERS[match_target]
     left = resolve_side_teams(parent_match["side_a"])
     right = resolve_side_teams(parent_match["side_b"])
-    return left.union(right)
+
+    combined = {}
+    for team in left + right:
+        team_key = (team["country"], team["group"], team["position"])
+        combined[team_key] = team
+    return list(combined.values())
 
 def get_all_matchups(match_id):
     if match_id not in MATCH_FEEDERS:
         return None
     
     feeder = MATCH_FEEDERS[match_id]
-    side_a_teams = sorted(list(resolve_side_teams(feeder["side_a"])))
-    side_b_teams = sorted(list(resolve_side_teams(feeder["side_b"])))
+    side_a_teams = sorted(
+        resolve_side_teams(feeder["side_a"]),
+        key=lambda team: (team["country"], team["group"], team["position"])
+    )
+    side_b_teams = sorted(
+        resolve_side_teams(feeder["side_b"]),
+        key=lambda team: (team["country"], team["group"], team["position"])
+    )
     
     raw_combinations = list(itertools.product(side_a_teams, side_b_teams))
     
     # Filter out impossible paradox matches (e.g. same physical country playing itself)
     clean_matchups = []
     for ta, tb in raw_combinations:
-        country_a = ta.split(" (")[0]
-        country_b = tb.split(" (")[0]
+        country_a = ta["country"]
+        country_b = tb["country"]
         if country_a != country_b:
-            clean_matchups.append({"team_a": ta, "team_b": tb, "display": f"{country_a} vs {country_b}"})
+            clean_matchups.append({
+                "team_a": ta,
+                "team_b": tb,
+                "display": f"{country_a} vs {country_b}",
+                "position": {
+                    "team_a": ta["position"],
+                    "team_b": tb["position"],
+                },
+            })
             
     return side_a_teams, side_b_teams, clean_matchups
 
@@ -107,27 +141,29 @@ def main():
 
     side_a, side_b, matchups = result
     
-    print("=========================================================================")
-    print(f"💥 COMBINATORIAL ANALYSIS FOR MATCH {args.match} 💥")
-    print("=========================================================================")
-    print(f"• Total Candidate Countries on Side A: {len(side_a)}")
-    print(f"• Total Candidate Countries on Side B: {len(side_b)}")
-    print(f"• Total Mathematical Matchup Permutations: {len(matchups)}")
-    print("=========================================================================\n")
+    safe_print("=========================================================================")
+    safe_print(f"💥 COMBINATORIAL ANALYSIS FOR MATCH {args.match} 💥")
+    safe_print("=========================================================================")
+    safe_print(f"• Total Candidate Countries on Side A: {len(side_a)}")
+    safe_print(f"• Total Candidate Countries on Side B: {len(side_b)}")
+    safe_print(f"• Total Mathematical Matchup Permutations: {len(matchups)}")
+    safe_print("=========================================================================\n")
     
-    print("👉 SIDE A POOL (Group & Placement Trackers):")
-    print(", ".join(side_a))
-    print("\n👉 SIDE B POOL (Group & Placement Trackers):")
-    print(", ".join(side_b))
-    print("\n=========================================================================")
+    safe_print("👉 SIDE A POOL (Group & Placement Trackers):")
+    safe_print(", ".join(team["display"] for team in side_a))
+    safe_print("\n👉 SIDE B POOL (Group & Placement Trackers):")
+    safe_print(", ".join(team["display"] for team in side_b))
+    safe_print("\n=========================================================================")
     
     if args.expand:
-        print(f"\n📋 ALL {len(matchups)} POSSIBLE MATCH-UPS:")
-        print("-------------------------------------------------------------------------")
+        safe_print(f"\n📋 ALL {len(matchups)} POSSIBLE MATCH-UPS:")
+        safe_print("-------------------------------------------------------------------------")
         for idx, m in enumerate(matchups, start=1):
-            print(f"{idx:03d}. {m['display']}  [{m['team_a']} vs {m['team_b']}]")
+            safe_print(
+                f"{idx:03d}. {m['display']}  [{m['team_a']['display']} vs {m['team_b']['display']}] | pos={m['position']['team_a']}/{m['position']['team_b']}"
+            )
     else:
-        print("\n💡 Run again with the '--expand' flag to output the complete list of specific matchups.")
+        safe_print("\n💡 Run again with the '--expand' flag to output the complete list of specific matchups.")
 
 if __name__ == "__main__":
     main()
